@@ -1,0 +1,254 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3.9%;
+    --primary: 21 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 96.1%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 21 100% 50%;
+    --radius: 0.5rem;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --info: 217 91% 60%;
+    --info-foreground: 0 0% 100%;
+    --font-sans: "Inter", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+
+  .dark {
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 21 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 14.9%;
+    --input: 0 0% 14.9%;
+    --ring: 21 100% 50%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --info: 217 91% 60%;
+    --info-foreground: 0 0% 100%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer utilities {
+  /* Swiss Grid System */
+  .swiss-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 1.5rem;
+  }
+
+  .swiss-grid-gap-0 {
+    gap: 0;
+  }
+
+  .swiss-grid-gap-1 {
+    gap: 0.25rem;
+  }
+
+  .swiss-grid-gap-2 {
+    gap: 0.5rem;
+  }
+
+  .swiss-grid-gap-4 {
+    gap: 1rem;
+  }
+
+  .swiss-grid-gap-8 {
+    gap: 2rem;
+  }
+
+  /* Technical Brutalism - Industrial Borders */
+  .border-industrial {
+    border-color: hsl(var(--border));
+    border-width: 1px;
+  }
+
+  .border-industrial-thick {
+    border-color: hsl(var(--border));
+    border-width: 2px;
+  }
+
+  /* Focus Ring - High Contrast for Accessibility */
+  .focus-ring {
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  }
+
+  /* Reduced Motion Support */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Screen Reader Only */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* Skip Link */
+  .skip-link {
+    @apply absolute left-4 top-4 z-50 -translate-y-full rounded-md bg-primary px-4 py-2 text-primary-foreground transition-transform focus:translate-y-0;
+  }
+
+  /* Keyboard Navigation */
+  .keyboard-focus:focus {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Terminal Styling */
+  .terminal {
+    @apply bg-industrial-950 text-industrial-100 font-mono;
+  }
+
+  .terminal-green {
+    @apply text-green-400;
+  }
+
+  .terminal-amber {
+    @apply text-amber-400;
+  }
+
+  .terminal-red {
+    @apply text-red-400;
+  }
+
+  /* Code Block Styling */
+  .code-block {
+    @apply rounded-md bg-industrial-100 p-4 font-mono text-sm dark:bg-industrial-900;
+  }
+
+  /* Challenge Card Hover */
+  .challenge-card {
+    @apply relative overflow-hidden transition-all duration-200;
+  }
+
+  .challenge-card:hover {
+    @apply shadow-lg;
+  }
+
+  .challenge-card::before {
+    content: "";
+    @apply absolute left-0 top-0 h-full w-1 bg-safety transition-all duration-200;
+  }
+
+  /* Status Indicators */
+  .status-solved {
+    @apply border-l-4 border-green-500;
+  }
+
+  .status-unsolved {
+    @apply border-l-4 border-industrial-300;
+  }
+
+  .status-locked {
+    @apply border-l-4 border-industrial-500 opacity-60;
+  }
+
+  /* Difficulty Badges */
+  .difficulty-easy {
+    @apply bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100;
+  }
+
+  .difficulty-medium {
+    @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100;
+  }
+
+  .difficulty-hard {
+    @apply bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-100;
+  }
+
+  .difficulty-extreme {
+    @apply bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100;
+  }
+}
+
+/* Monaco Editor Customization */
+.monaco-editor {
+  --vscode-editor-background: hsl(var(--background)) !important;
+  --vscode-editor-foreground: hsl(var(--foreground)) !important;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Selection Styling */
+::selection {
+  background: hsl(var(--primary) / 0.3);
+  color: hsl(var(--foreground));
+}
