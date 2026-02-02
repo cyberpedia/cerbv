@@ -1,0 +1,142 @@
+# Patroni Configuration for PostgreSQL HA
+# Used by both primary and replica containers
+
+scope: cerberus-cluster
+namespace: /cerberus/
+name: ${HOSTNAME}
+
+# Rest API for health checks and control
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: ${HOSTNAME}:8008
+  auth: 'postgres:${POSTGRES_PASSWORD}'
+  certfile: /etc/ssl/certs/ssl-cert-snakeoil.pem
+  keyfile: /etc/ssl/private/ssl-cert-snakeoil.key
+  ctl_cluster_store: etcd:
+
+# PostgreSQL configuration
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: ${HOSTNAME}:5432
+  data_dir: /var/lib/postgresql/data
+  pgpass: /tmp/pgpass
+  authentication:
+    replication:
+      username: replicator
+      password: ${DB_REPLICATION_PASSWORD}
+    superuser:
+      username: postgres
+      password: ${POSTGRES_PASSWORD}
+  parameters:
+    # Performance tuning
+    max_connections: 200
+    shared_buffers: 512MB
+    effective_cache_size: 1GB
+    work_mem: 16MB
+    maintenance_work_mem: 128MB
+    max_parallel_workers_per_gather: 2
+    max_parallel_workers: 4
+    
+    # WAL settings
+    wal_level: replica
+    wal_buffers: 16MB
+    max_wal_size: 1GB
+    min_wal_size: 512MB
+    checkpoint_completion_target: 0.9
+    
+    # Logging
+    log_min_duration_statement: 1000
+    log_line_prefix: '%t [%p]: [%l-1] user=%u,db=%d '
+    log_lock_waits: on
+    log_temp_files: 0
+    
+    # Connection settings
+    tcp_keepalives_idle: 60
+    tcp_keepalives_interval: 10
+    tcp_keepalives_count: 5
+    
+    # Replication
+    hot_standby: on
+    hot_standby_feedback: on
+    wal_receiver_status_interval: 10s
+    max_standby_streaming_delay: 30s
+    
+    # Security
+    password_encryption: scram-sha-256
+
+# Consul backend for distributed consensus
+# Uncomment and configure if using Consul instead of etcd
+# consul:
+#   host: consul.service.consul:8500
+#   registerService: true
+#   servicePort: 5432
+#   serviceName: cerberus-postgres
+
+# Etcd key-value store for leader election
+etcd:
+  host: ${ETCD_HOST:-etcd:2379}
+  protocol: http
+  certfile: /etc/ssl/certs/ssl-cert-snakeoil.pem
+  keyfile: /etc/ssl/private/ssl-cert-snakeoil.key
+
+# Tags for service discovery
+tags:
+  nofailover: false
+  clonefrom: false
+  restartpolicy: on-failure
+  retries: 3
+
+# Watchdog for automatic failover
+watchdog:
+  mode: off
+  # mode: automatic  # Enable if hardware watchdog is available
+  # device: /dev/watchdog
+  # safety_margin: 5
+
+# Bootstrap configuration
+bootstrap:
+  # Initialize a new cluster
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576  # 1GB
+    master_start_timeout: 300
+    synchronous_mode: false
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        synchronous_standby_names: '*'
+  
+  # Method to use for bootstrap
+  method: initdb
+  initdb:
+    - encoding: UTF8
+    - locale: C
+    - data-checksums
+  # Clone from existing cluster
+  # method: clone
+  #  ...
+  # Method for standby cluster
+  # method: recovery
+  #  ...
+
+# Failover configuration
+failover:
+  # Maximum number of retries
+  retries: 3
+  # Delay between retries
+  delay: 10
+  # Maximum lag on failover
+  maximum_lag_on_failover: 1048576
+
+# Logging
+log:
+  level: INFO
+  format: '%(asctime)s %(levelname)s: %(message)s'
+  handlers:
+    console:
+      class: logging.StreamHandler
+      level: DEBUG
+      stream: /dev/stdout

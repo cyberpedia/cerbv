@@ -1,0 +1,168 @@
+# Traefik v3 Dynamic Configuration
+# Middlewares and custom routes
+
+http:
+  # Middlewares
+  middlewares:
+    # Security headers
+    security-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        forceSTSHeader: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        customFrameOptionsValue: "SAMEORIGIN"
+    
+    # Rate limiting
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 200
+        period: 1s
+    
+    # IP allowlist for admin routes
+    admin-ip-whitelist:
+      ipAllowList:
+        sourceRange:
+          - "10.0.0.0/8"
+          - "192.168.0.0/16"
+          - "172.16.0.0/12"
+        ipStrategy:
+          depth: 1
+    
+    # Circuit breaker for backend
+    backend-circuit-breaker:
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.5 || ResponseCodeRatio(500, 600, 0, 600) > 0.5"
+    
+    # Compression
+    compression:
+      compress: {}
+
+  # Services
+  services:
+    # Backend service with health check
+    cerb-backend:
+      loadBalancer:
+        healthCheck:
+          path: /health
+          interval: 10s
+          timeout: 5s
+          retries: 3
+        servers:
+          - url: "http://backend:8000"
+    
+    # Frontend service
+    cerb-frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:3000"
+    
+    # Realtime service for WebSocket
+    cerb-realtime:
+      loadBalancer:
+        servers:
+          - url: "http://realtime:3001"
+        sticky:
+          cookie:
+            name: "ws_session"
+            httpOnly: true
+
+    # Grafana
+    grafana:
+      loadBalancer:
+        servers:
+          - url: "http://grafana:3000"
+
+    # Prometheus
+    prometheus:
+      loadBalancer:
+        servers:
+          - url: "http://prometheus:9090"
+
+    # MinIO Console
+    minio-console:
+      loadBalancer:
+        servers:
+          - url: "http://minio:9001"
+
+  # Routers
+  routers:
+    # Frontend router
+    cerb-frontend:
+      rule: "Host(`localhost`) || Host(`www.localhost`)"
+      entryPoints:
+        - websecure
+      service: cerb-frontend
+      tls:
+        certresolver: letsencrypt
+      middlewares:
+        - security-headers
+        - compression
+
+    # API router
+    cerb-backend:
+      rule: "Host(`api.localhost`)"
+      entryPoints:
+        - websecure
+      service: cerb-backend
+      tls:
+        certresolver: letsencrypt
+      middlewares:
+        - rate-limit
+        - security-headers
+
+    # WebSocket router
+    cerb-realtime:
+      rule: "Host(`realtime.localhost`)"
+      entryPoints:
+        - websecure
+      service: cerb-realtime
+      tls:
+        certresolver: letsencrypt
+
+    # Grafana router
+    grafana:
+      rule: "Host(`grafana.localhost`)"
+      entryPoints:
+        - websecure
+      service: grafana
+      tls:
+        certresolver: letsencrypt
+
+    # Prometheus router
+    prometheus:
+      rule: "Host(`prometheus.localhost`)"
+      entryPoints:
+        - websecure
+      service: prometheus
+      tls:
+        certresolver: letsencrypt
+      middlewares:
+        - admin-ip-whitelist
+
+    # MinIO Console router
+    minio-console:
+      rule: "Host(`minio.localhost`)"
+      entryPoints:
+        - websecure
+      service: minio-console
+      tls:
+        certresolver: letsencrypt
+
+# TCP routers for databases (internal only)
+tcp:
+  routers:
+    postgres-primary:
+      rule: "HostSNI(`*`)"
+      service: postgres-primary
+      entryPoints:
+        - websecure
+
+  services:
+    postgres-primary:
+      loadBalancer:
+        servers:
+          - address: "postgres-primary:5432"

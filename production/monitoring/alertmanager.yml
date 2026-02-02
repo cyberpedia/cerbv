@@ -1,0 +1,142 @@
+# Alertmanager Configuration for Cerberus CTF Platform
+
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: '${SMTP_HOST}:587'
+  smtp_from: 'alerts@cerberus.example.com'
+  smtp_auth_username: '${SMTP_USER}'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_require_tls: true
+
+# Route configuration - defines how alerts are grouped and routed
+route:
+  group_by: ['alertname', 'severity', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default-receiver'
+  routes:
+    # High priority alerts
+    - match:
+        severity: critical
+      receiver: 'critical-receiver'
+      group_wait: 0s
+      repeat_interval: 1h
+    
+    # Infrastructure alerts
+    - match:
+        service: postgres
+      receiver: 'database-receiver'
+      routes:
+        - match:
+            severity: critical
+          receiver: 'database-critical-receiver'
+    
+    # Application alerts
+    - match:
+        service: backend
+      receiver: 'app-receiver'
+    
+    # Security alerts
+    - match:
+        severity: security
+      receiver: 'security-receiver'
+
+# Inhibition rules - suppress alerts when other alerts are firing
+inhibit_rules:
+  # Suppress warning alerts when critical alert is firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+  
+  # Suppress alerts for same service
+  - source_match:
+      service: 'postgres'
+    target_match:
+      service: 'postgres'
+    equal: ['instance']
+
+# Receivers
+receivers:
+  # Default receiver - sends to all configured channels
+  - name: 'default-receiver'
+    email_configs:
+      - send_resolved: true
+        headers:
+          Subject: "[Cerberus] {{ .Status | upper }} - {{ .Labels.alertname }}"
+        to: 'ops-team@example.com'
+    slack_configs:
+      - send_resolved: true
+        api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#cerberus-alerts'
+        title: "[Cerberus] {{ .Status | upper }} - {{ .Labels.alertname }}"
+        text: |-
+          {{ range .Alerts }}
+          *Alert:* {{ .Labels.alertname }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Start:* {{ .StartsAt.Format "2006-01-02 15:04:05" }}
+          {{ end }}
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        severity: '{{ if eq .Status "firing" }}{{ .Labels.severity }}{{ else }}info{{ end }}'
+        summary: "{{ .Labels.alertname }} - {{ .Labels.instance }}"
+    webhook_configs:
+      - url: '${WEBHOOK_URL}'
+        send_resolved: true
+
+  # Critical receiver - immediate attention
+  - name: 'critical-receiver'
+    email_configs:
+      - send_resolved: true
+        to: 'oncall@example.com'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        severity: critical
+
+  # Database receiver
+  - name: 'database-receiver'
+    email_configs:
+      - send_resolved: true
+        to: 'dba-team@example.com'
+
+  # Database critical receiver
+  - name: 'database-critical-receiver'
+    email_configs:
+      - send_resolved: true
+        to: 'dba-oncall@example.com'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_DBA_KEY}'
+        severity: critical
+
+  # Application receiver
+  - name: 'app-receiver'
+    slack_configs:
+      - send_resolved: true
+        api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#cerberus-dev'
+
+  # Security receiver - security team
+  - name: 'security-receiver'
+    email_configs:
+      - send_resolved: false
+        to: 'security-team@example.com'
+    slack_configs:
+      - send_resolved: true
+        api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#cerberus-security'
+
+# Time intervals for alert routing
+time_intervals:
+  - name: 'workhours'
+    times:
+      - days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+        times: ['09:00-18:00']
+  - name: 'offhours'
+    times:
+      - days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+        times: ['00:00-09:00', '18:00-24:00']
+      - days: ['saturday', 'sunday']
+        times: ['00:00-24:00']

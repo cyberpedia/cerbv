@@ -1,0 +1,108 @@
+# Promtail Configuration for Log Shipping to Loki
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    timeout: 10s
+    batch_size: 102400  # 100KB
+    batch_wait: 1s
+    tenant_id: ""
+    tls_config:
+      insecure_skip_verify: false
+
+scrape_configs:
+  # Scrape Docker container logs
+  - job_name: 'containers'
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_id']
+        target_label: container_id
+      - source_labels: ['__meta_docker_container_name']
+        target_label: container_name
+      - source_labels: ['__meta_docker_container_image']
+        target_label: image
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: compose_project
+      - action: replace
+        source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: service
+      - action: labelmap
+        regex: '__meta_docker_container_label_(.*)'
+        replacement: 'label_$1'
+
+  # Scrape application logs
+  - job_name: 'cerberus-logs'
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: 'cerberus'
+          app: 'cerberus'
+          environment: 'production'
+          __path__: /var/log/cerberus/**/*.log
+
+  # Scrape Traefik access logs
+  - job_name: 'traefik-access'
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: 'traefik'
+          __path__: /var/log/traefik/access.log
+
+  # Scrape PostgreSQL logs
+  - job_name: 'postgres-logs'
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: 'postgresql'
+          __path__: /var/log/postgresql/**/*.log
+
+  # Scrape Nginx/Reverse Proxy logs
+  - job_name: 'nginx-logs'
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: 'nginx'
+          __path__: /var/log/nginx/**/*.log
+
+# Pipeline stages for log processing
+pipeline_stages:
+  - match:
+      selector: '{job="traefik"}'
+      stages:
+        - regex:
+            expression: '^(?P<ip>\\S+) \\S+ \\S+ \\[(?P<timestamp>[^\\]]+)\\] "(?P<method>\\S+) (?P<path>\\S+) (?P<protocol>\\S+)" (?P<status>\\d+) (?P<size>\\d+) "(?P<referer>[^\"]*)" "(?P<user_agent>[^\"]*)" (?P<request_time>\\S+)'
+        - timestamp:
+            source: timestamp
+            format: "02/Jan/2006:15:04:05 -0700"
+        - labels:
+            method:
+            status:
+            path:
+        - output:
+            source: message
+
+  - match:
+      selector: '{job="cerberus"}'
+      stages:
+        - json:
+            expressions:
+              level:
+              message:
+              timestamp:
+        - labels:
+            level:
+        - timestamp:
+            source: timestamp
+            format: "iso8601"
