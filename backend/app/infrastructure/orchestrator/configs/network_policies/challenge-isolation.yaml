@@ -1,0 +1,183 @@
+# Calico NetworkPolicy for challenge container isolation
+# Blocks inter-challenge communication and restricts egress
+
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: challenge-isolation
+  namespace: cerberus-challenges
+spec:
+  selector: app == 'challenge'
+  types:
+    - Ingress
+    - Egress
+  
+  # Ingress rules - only allow from proxy/load balancer
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        selector: app == 'challenge-proxy'
+      destination:
+        ports:
+          - 80
+          - 443
+          - 8080
+          - 3000
+          - 5000
+          - 8000
+          - 9000
+    
+    # Allow health checks from monitoring
+    - action: Allow
+      protocol: TCP
+      source:
+        selector: app == 'monitoring'
+      destination:
+        ports:
+          - 8080
+  
+  # Egress rules - very restrictive
+  egress:
+    # Allow DNS
+    - action: Allow
+      protocol: UDP
+      destination:
+        ports:
+          - 53
+    
+    # Allow NTP
+    - action: Allow
+      protocol: UDP
+      destination:
+        ports:
+          - 123
+    
+    # Block inter-challenge communication
+    - action: Deny
+      destination:
+        selector: app == 'challenge'
+    
+    # Allow specific external resources (challenge-specific)
+    - action: Allow
+      protocol: TCP
+      destination:
+        nets:
+          # Allow metadata service (for cloud challenges)
+          - 169.254.169.254/32
+    
+    # Deny all other egress
+    - action: Deny
+
+---
+# Default deny all policy for challenge namespace
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: default-deny-challenges
+spec:
+  namespaceSelector: name == 'cerberus-challenges'
+  types:
+    - Ingress
+    - Egress
+  ingress:
+    - action: Deny
+  egress:
+    - action: Deny
+
+---
+# Allow challenge manager to communicate with challenges
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: challenge-manager-access
+  namespace: cerberus-challenges
+spec:
+  selector: app == 'challenge'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        selector: app == 'challenge-manager'
+        namespaceSelector: name == 'cerberus-system'
+      destination:
+        ports:
+          - 2375  # Docker API
+          - 10250 # Kubelet
+
+---
+# Cilium NetworkPolicy alternative (if using Cilium)
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: challenge-isolation-cilium
+  namespace: cerberus-challenges
+spec:
+  endpointSelector:
+    matchLabels:
+      app: challenge
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: challenge-proxy
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+            - port: "8080"
+              protocol: TCP
+  egress:
+    # Allow DNS
+    - toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+    
+    # Deny inter-challenge communication
+    - toEndpoints:
+        - matchLabels:
+            app: challenge
+      toPorts:
+        - ports:
+            - port: "0-65535"
+      verdict: Deny
+    
+    # Allow metadata service
+    - toCIDR:
+        - 169.254.169.254/32
+
+---
+# Egress gateway policy for controlled internet access
+apiVersion: projectcalico.org/v3
+kind: EgressGatewayPolicy
+metadata:
+  name: challenge-egress-control
+spec:
+  rules:
+    - destination:
+        nets:
+          - 0.0.0.0/0
+      description: "Route all challenge traffic through egress gateway"
+  
+---
+# Application layer policy for HTTP inspection (requires Istio/Envoy)
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: challenge-l7-policy
+  namespace: cerberus-challenges
+spec:
+  selector: app == 'challenge'
+  types:
+    - Egress
+  egress:
+    - action: Allow
+      http:
+        methods: ["GET", "POST"]
+        paths:
+          - exact: "/health"
+          - prefix: "/api/"

@@ -1,0 +1,166 @@
+# Cerberus CTF Platform - fail2ban Configuration
+# Location: /etc/fail2ban/jail.local (cerberus-custom)
+# Description: fail2ban jail configuration for intrusion prevention
+# Target: Ubuntu 22.04 LTS
+#
+# Installation:
+#   cp /opt/cerberus/config/jail.local /etc/fail2ban/jail.local
+#   systemctl restart fail2ban
+#
+# Verification:
+#   fail2ban-client status
+#   fail2ban-client status sshd
+#   fail2ban-client status nginx-http-auth
+
+[DEFAULT]
+# Ban settings
+bantime = 3600
+findtime = 600
+maxretry = 3
+backend = systemd
+
+# Notification settings (optional - configure as needed)
+destemail = root@localhost
+sender = fail2ban@localhost
+mta = sendmail
+
+# Action defaults
+action = %(action_)s
+
+# Ignore local network (adjust as needed)
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+
+################################################################################
+# SSH Protection
+################################################################################
+
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = %(sshd_log)s
+backend = systemd
+maxretry = 3
+findtime = 300
+bantime = 3600
+
+# Aggressive mode - catch more attack patterns
+mode = aggressive
+
+################################################################################
+# NGINX Protection
+################################################################################
+
+[nginx-http-auth]
+enabled = true
+port = http,https
+filter = nginx-http-auth
+logpath = /var/log/nginx/error.log
+maxretry = 3
+findtime = 600
+bantime = 3600
+
+[nginx-limit-req]
+enabled = true
+port = http,https
+filter = nginx-limit-req
+logpath = /var/log/nginx/error.log
+maxretry = 10
+findtime = 60
+bantime = 3600
+
+[nginx-botsearch]
+enabled = true
+port = http,https
+filter = nginx-botsearch
+logpath = /var/log/nginx/access.log
+maxretry = 2
+findtime = 600
+bantime = 86400
+
+[nginx-bad-request]
+enabled = true
+port = http,https
+filter = nginx-bad-request
+logpath = /var/log/nginx/access.log
+maxretry = 5
+findtime = 300
+bantime = 3600
+
+################################################################################
+# Docker Protection
+################################################################################
+
+[docker-compose]
+enabled = false
+port = all
+filter = docker-compose
+logpath = /var/log/docker.log
+maxretry = 3
+findtime = 600
+bantime = 3600
+
+################################################################################
+# Application Protection
+################################################################################
+
+[cerberus-auth]
+enabled = true
+port = http,https
+filter = cerberus-auth
+logpath = /opt/cerberus/logs/auth.log
+maxretry = 3
+findtime = 300
+bantime = 3600
+
+[cerberus-admin]
+enabled = true
+port = http,https
+filter = cerberus-admin
+logpath = /opt/cerberus/logs/admin.log
+maxretry = 3
+findtime = 300
+bantime = 7200
+
+################################################################################
+# System Protection
+################################################################################
+
+[systemd-journal]
+enabled = true
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=sshd.service
+
+[pam-generic]
+enabled = true
+port = all
+filter = pam-generic
+logpath = /var/log/auth.log
+backend = systemd
+maxretry = 3
+findtime = 600
+bantime = 3600
+
+################################################################################
+# Additional Protections
+################################################################################
+
+[recidive]
+enabled = true
+filter = recidive
+logpath = /var/log/fail2ban.log
+action = %(action_abuseipdb)s[abuseipdbcategory="18,22"]
+           %(action)s
+bantime = 604800
+findtime = 86400
+maxretry = 5
+
+# Port scanning detection
+[portscan]
+enabled = true
+port = all
+filter = portscan
+logpath = /var/log/ufw.log
+maxretry = 1
+findtime = 60
+bantime = 86400
