@@ -1,0 +1,419 @@
+#
+# Cerberus CTF Platform - Data Layer
+# PostgreSQL 16 + TimescaleDB, Redis 7, MinIO, PgBouncer
+# Version: 1.0.0
+#
+
+version: '3.8'
+
+networks:
+  cerberus-data:
+    driver: bridge
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+  cerberus-backend:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
+
+volumes:
+  postgres-data:
+    driver: local
+  postgres-wal:
+    driver: local
+  redis-data:
+    driver: local
+  minio-data-1:
+    driver: local
+  minio-data-2:
+    driver: local
+  minio-data-3:
+    driver: local
+  minio-data-4:
+    driver: local
+  certs:
+    driver: local
+
+services:
+  ###############################################
+  # PostgreSQL 16 Primary with TimescaleDB
+  ###############################################
+  postgres-primary:
+    image: timescale/timescaledb:latest-pg16
+    container_name: cerberus-postgres
+    hostname: postgres-primary
+    restart: unless-stopped
+    user: "999:999"
+    
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cerberus_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: cerberus
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+      # WAL archiving
+      WALG_S3_PREFIX: s3://postgres-wal/wal
+      WALG_S3_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      WALG_S3_SECRET_KEY: ${MINIO_SECRET_KEY}
+      WALG_S3_ENDPOINT: http://minio:9000
+      WALG_COMPRESSION_METHOD: lz4
+      # Performance tuning (auto-detected or override via env)
+      POSTGRES_SHARED_BUFFERS: ${POSTGRES_SHARED_BUFFERS:-2GB}
+      POSTGRES_EFFECTIVE_CACHE_SIZE: ${POSTGRES_EFFECTIVE_CACHE_SIZE:-6GB}
+      POSTGRES_MAINTENANCE_WORK_MEM: ${POSTGRES_MAINTENANCE_WORK_MEM:-512MB}
+      POSTGRES_WORK_MEM: ${POSTGRES_WORK_MEM:-16MB}
+    
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-wal:/var/lib/postgresql/wal
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/conf/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./certs:/certs:ro
+    
+    ports:
+      - "127.0.0.1:5432:5432"
+    
+    networks:
+      - cerberus-data
+      - cerberus-backend
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cerberus_admin} -d cerberus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service_name"
+        env: "OS_VERSION"
+
+  ###############################################
+  # PgBouncer - Connection Pooling
+  ###############################################
+  pgbouncer:
+    image: pgbouncer/pgbouncer:latest
+    container_name: cerberus-pgbouncer
+    hostname: pgbouncer
+    restart: unless-stopped
+    
+    environment:
+      DATABASES_HOST: postgres-primary
+      DATABASES_PORT: 5432
+      DATABASES_DATABASE: cerberus
+      DATABASES_USER: ${POSTGRES_USER:-cerberus_admin}
+      DATABASES_PASSWORD: ${POSTGRES_PASSWORD}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+      MIN_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 5
+      MAX_DB_CONNECTIONS: 100
+      MAX_USER_CONNECTIONS: 100
+      SERVER_LIFETIME: 3600
+      SERVER_IDLE_TIMEOUT: 600
+      QUERY_TIMEOUT: 300
+      LOG_CONNECTIONS: 1
+      LOG_DISCONNECTIONS: 1
+      LOG_POOLER_ERRORS: 1
+      STATS_PERIOD: 60
+    
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+      - ./certs:/certs:ro
+    
+    ports:
+      - "127.0.0.1:6432:6432"
+    
+    networks:
+      - cerberus-data
+      - cerberus-backend
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD-SHELL", "psql postgresql://${POSTGRES_USER:-cerberus_admin}:${POSTGRES_PASSWORD}@localhost:6432/cerberus -c 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  ###############################################
+  # Redis 7 - Sessions & Cache
+  ###############################################
+  redis:
+    image: redis:7-alpine
+    container_name: cerberus-redis
+    hostname: redis
+    restart: unless-stopped
+    command: redis-server /usr/local/etc/redis/redis.conf
+    
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ACL_PASSWORD: ${REDIS_ACL_PASSWORD}
+    
+    volumes:
+      - redis-data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./certs:/certs:ro
+    
+    ports:
+      - "127.0.0.1:6379:6379"
+    
+    networks:
+      - cerberus-data
+      - cerberus-backend
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    
+    sysctls:
+      - net.core.somaxconn=65535
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  ###############################################
+  # MinIO - Object Storage
+  ###############################################
+  minio:
+    image: minio/minio:latest
+    container_name: cerberus-minio
+    hostname: minio
+    restart: unless-stopped
+    command: server --console-address :9001 http://minio/data-{1...4}
+    
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BROWSER: "on"
+      MINIO_SERVER_URL: https://minio.cerberus.local:9000
+      MINIO_CONSOLE_URL: https://minio-console.cerberus.local:9001
+      # KMS Configuration (optional, uses auto-encryption if not set)
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY:-}
+      MINIO_AUDIT_WEBHOOK_ENABLE: "on"
+      MINIO_AUDIT_WEBHOOK_ENDPOINT: http://cerberus-app:8080/webhooks/minio-audit
+    
+    volumes:
+      - minio-data-1:/data-1
+      - minio-data-2:/data-2
+      - minio-data-3:/data-3
+      - minio-data-4:/data-4
+      - ./minio/docker-entrypoint.sh:/usr/bin/docker-entrypoint.sh:ro
+      - ./minio/policies:/policies:ro
+      - ./certs:/certs:ro
+    
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    
+    networks:
+      - cerberus-data
+      - cerberus-backend
+    
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  ###############################################
+  # MinIO Client - Bucket Setup
+  ###############################################
+  minio-setup:
+    image: minio/mc:latest
+    container_name: cerberus-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5 &&
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD} &&
+      mc mb -p local/postgres-wal &&
+      mc mb -p local/challenge-files &&
+      mc mb -p local/backups &&
+      mc mb -p local/audit-logs &&
+      mc policy set download local/challenge-files/public &&
+      mc admin user add local ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY} &&
+      mc admin policy create local cerberus-app /policies/cerberus-app-policy.json &&
+      mc admin policy attach local cerberus-app --user=${MINIO_ACCESS_KEY} &&
+      echo 'MinIO setup complete'
+      "
+    networks:
+      - cerberus-data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+    volumes:
+      - ./minio/policies:/policies:ro
+    profiles:
+      - setup
+
+  ###############################################
+  # WAL-G Backup Service
+  ###############################################
+  backup-wal:
+    image: timescale/timescaledb:latest-pg16
+    container_name: cerberus-backup
+    restart: "no"
+    command: >
+      python3 /opt/cerberus/scripts/backup-wal.py
+    
+    environment:
+      PGHOST: postgres-primary
+      PGPORT: 5432
+      PGDATABASE: cerberus
+      PGUSER: ${POSTGRES_USER:-cerberus_admin}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      WALG_S3_PREFIX: s3://postgres-wal/wal
+      WALG_S3_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      WALG_S3_SECRET_KEY: ${MINIO_SECRET_KEY}
+      WALG_S3_ENDPOINT: http://minio:9000
+      WALG_COMPRESSION_METHOD: lz4
+      BACKUP_SCHEDULE: "0 2 * * *"
+      RETENTION_DAYS: "30"
+    
+    volumes:
+      - ./scripts/backup-wal.py:/opt/cerberus/scripts/backup-wal.py:ro
+      - ./scripts/walg.yml:/opt/cerberus/walg.yml:ro
+      - postgres-data:/var/lib/postgresql/data:ro
+      - /var/run/postgresql:/var/run/postgresql
+    
+    networks:
+      - cerberus-data
+      - cerberus-backend
+    
+    depends_on:
+      - postgres-primary
+      - minio
+    
+    profiles:
+      - backup
+
+  ###############################################
+  # Prometheus Metrics Exporter (Postgres)
+  ###############################################
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: cerberus-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-cerberus_admin}:${POSTGRES_PASSWORD}@postgres-primary:5432/cerberus?sslmode=disable
+    ports:
+      - "127.0.0.1:9187:9187"
+    networks:
+      - cerberus-data
+      - cerberus-backend
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    profiles:
+      - monitoring
+
+  ###############################################
+  # Redis Exporter
+  ###############################################
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: cerberus-redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:9121:9121"
+    networks:
+      - cerberus-data
+      - cerberus-backend
+    depends_on:
+      redis:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    profiles:
+      - monitoring
+
+# Environment variable requirements:
+# - POSTGRES_PASSWORD: Strong password for PostgreSQL
+# - POSTGRES_SHARED_BUFFERS: Shared memory buffer size (default: 2GB)
+# - POSTGRES_EFFECTIVE_CACHE_SIZE: Effective cache size (default: 6GB)
+# - REDIS_PASSWORD: Redis requirepass password
+# - REDIS_ACL_PASSWORD: Redis ACL user password
+# - MINIO_ROOT_PASSWORD: MinIO root password (min 8 chars)
+# - MINIO_ACCESS_KEY: MinIO service account access key
+# - MINIO_SECRET_KEY: MinIO service account secret key
+# - MINIO_KMS_SECRET_KEY: Optional KMS master key
