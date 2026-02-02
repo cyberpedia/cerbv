@@ -1,0 +1,204 @@
+# Falco Runtime Security Rules for Cerberus
+# Pod Security Standards (Restricted)
+
+# Rule files loaded
+- required_plugin_version: 0.5.0
+  rules_file:
+    - /etc/falco/k8s_audit_rules.yaml
+    - /etc/falco/falco_rules.local.yaml
+
+# Custom rules for Cerberus CTF Platform
+- rule: Cerberus Unauthorized Container Image Pull
+  desc: Detect unauthorized container image pulls in cerberus namespace
+  condition: >
+    container.id != host and
+    container.image.repository contains "cerberus" and
+    container.image.repository != "ghcr.io/cerberus/*" and
+    not (container.image.repository contains "trusted-registry")
+  output: >
+    Unauthorized container image pulled in cerberus namespace
+    (user=%user.name image=%container.image.repository command=%proc.cmdline)
+  priority: CRITICAL
+  tags: [container, security, cerberus]
+
+- rule: Cerberus Shell in Challenge Container
+  desc: Detect shell execution in challenge containers
+  condition: >
+    container.name startswith "challenge-" and
+    (proc.name in (bash, sh, dash, zsh) or
+     proc.name contains "shell")
+  output: >
+    Shell detected in challenge container
+    (user=%user.name container=%container.name command=%proc.cmdline)
+  priority: WARNING
+  tags: [container, security, cerberus, tty]
+
+- rule: Cerberus Database Connection from Unauthorized Pod
+  desc: Detect database connections from non-backend pods
+  condition: >
+    fd.sip.name = "postgres-primary" and
+    not (container.image.repository contains "cerberus-backend" or
+         container.image.repository contains "cerberus-realtime")
+  output: >
+    Unauthorized database connection detected
+    (user=%user.name container=%container.name dst_ip=%fd.sip.name)
+  priority: CRITICAL
+  tags: [network, database, security, cerberus]
+
+- rule: Cerberus Sensitive File Access
+  desc: Detect access to sensitive files
+  condition: >
+    (evt.type = open or evt.type = openat) and
+    (fd.name contains "/etc/passwd" or
+     fd.name contains "/etc/shadow" or
+     fd.name contains "/root/.ssh" or
+     fd.name contains "/var/run/secrets")
+  output: >
+    Sensitive file access detected
+    (user=%user.name container=%container.name file=%fd.name)
+  priority: WARNING
+  tags: [filesystem, security, cerberus]
+
+- rule: Cerberus Privilege Escalation
+  desc: Detect privilege escalation attempts
+  condition: >
+    (evt.type = setuid or evt.type = setgid) and
+    (user.uid != 0 and user.uid >= 1000)
+  output: >
+    Privilege escalation attempt detected
+    (user=%user.name command=%proc.cmdline uid=%user.uid)
+  priority: CRITICAL
+  tags: [security, process, cerberus]
+
+- rule: Cerberus Kubernetes API Access
+  desc: Detect Kubernetes API access from application pods
+  condition: >
+    evt.type = connect and
+    (fd.sport = 443 or fd.sport = 6443) and
+    container.id != host
+  output: >
+    Kubernetes API access from container
+    (user=%user.name container=%container.name dest_ip=%fd.sip)
+  priority: NOTICE
+  tags: [k8s, api, security, cerberus]
+
+- rule: Cerberus Network Policy Violation
+  desc: Detect potential network policy violations
+  condition: >
+    net.ipv4.ip != 0 and
+    container.id != host and
+    container.namespace = "cerberus"
+  output: >
+    Network activity detected
+    (user=%user.name container=%container.name connection=%fd.name)
+  priority: INFO
+  tags: [network, security, cerberus]
+
+- rule: Cerberus Execution from /tmp
+  desc: Detect execution of binaries from /tmp
+  condition: >
+    (proc.name != "-bash" and
+     (evt.type = execve or evt.type = execveat) and
+     (fd.directory = "/tmp" or fd.directory startswith "/tmp/"))
+  output: >
+    Execution from /tmp detected
+    (user=%user.name container=%container.name command=%proc.cmdline)
+  priority: WARNING
+  tags: [filesystem, security, cerberus]
+
+- rule: Cerberus Secret Environment Variable
+  desc: Detect secret exposure in environment variables
+  condition: >
+    (proc.name contains "env" or proc.name contains "printenv") and
+    (env contains "PASSWORD" or
+     env contains "SECRET" or
+     env contains "API_KEY" or
+     env contains "CREDENTIAL")
+  output: >
+    Potential secret access via environment
+    (user=%user.name container=%container.name command=%proc.cmdline)
+  priority: WARNING
+  tags: [security, secrets, cerberus]
+
+- rule: Cerberus Binary Download
+  desc: Detect binary downloads using curl/wget
+  condition: >
+    (proc.name = curl or proc.name = wget or proc.name = fetch) and
+    (fd.name contains "http://" or fd.name contains "https://")
+  output: >
+    Binary download detected
+    (user=%user.name container=%container.name url=%fd.name)
+  priority: NOTICE
+  tags: [network, security, cerberus]
+
+- rule: Cerberus Port Scan
+  desc: Detect potential port scanning activity
+  condition: >
+    evt.type = connect and
+    container.id != host and
+    proc.name contains "nc" or
+    proc.name contains "nmap" or
+    proc.name contains "netcat"
+  output: >
+    Port scanning activity detected
+    (user=%user.name container=%container.name destination=%fd.rip)
+  priority: WARNING
+  tags: [network, security, cerberus]
+
+- rule: Cerberus Modify System Time
+  desc: Detect system time modification
+  condition: >
+    (evt.type = settimeofday or evt.type = clock_settime or
+     evt.type = adjtimex or evt.type = stime)
+  output: >
+    System time modification attempt
+    (user=%user.name container=%container.name)
+  priority: CRITICAL
+  tags: [system, security, cerberus]
+
+- rule: Cerberus Suspicious Process Spawn
+  desc: Detect suspicious process spawning
+  condition: >
+    proc.name in (suspicious_binaries) or
+    (proc.name contains "msfconsole" or
+     proc.name contains "metasploit" or
+     proc.name contains "sqlmap" or
+     proc.name contains "john" or
+     proc.name contains "hashcat")
+  output: >
+    Suspicious binary execution
+    (user=%user.name container=%container.name command=%proc.cmdline)
+  priority: CRITICAL
+  tags: [process, security, cerberus]
+
+# Exceptions
+- list: suspicious_binaries
+  items: []
+
+# Macros for reusability
+- macro: cerberus_namespace
+  condition: container.namespace = "cerberus"
+
+- macro: challenge_container
+  condition: container.name startswith "challenge-"
+
+- macro: backend_container
+  condition: container.image.repository contains "cerberus-backend"
+
+- macro: database_container
+  condition: container.image.repository contains "postgres" or
+            container.name contains "postgres"
+
+# Output configuration
+json_output: true
+json_include_output_label: true
+json_include_tags: true
+
+# Engine configuration
+engine:
+  kind: modern_bpf
+  buffer_size: 16777216
+  drop_event_batch: 1
+  snaplen: 128
+  dynsets: 1000
+  systemd_probe: true

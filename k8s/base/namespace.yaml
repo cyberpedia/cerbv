@@ -1,0 +1,25 @@
+# Cerberus Kubernetes Namespace Configuration
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cerberus
+  labels:
+    name: cerberus
+    environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    name: monitoring
+    environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: challenge-namespace
+  labels:
+    name: challenge-namespace
+    environment: production

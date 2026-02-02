@@ -1,0 +1,7 @@
+# PgBouncer userlist - format: "username" "password_hash"
+# Generate password hash with: echo -n "md5$(echo -n 'password''username' | md5sum | cut -d' ' -f1)"
+# For SCRAM-SHA-256, use the hash from PostgreSQL: SELECT rolpassword FROM pg_authid WHERE rolname='username';
+
+# Application user (replace with actual SCRAM-SHA-256 hash from PostgreSQL)
+"cerberus_admin" "SCRAM-SHA-256$4096:placeholder$placeholder:placeholder"
+"cerberus_app" "SCRAM-SHA-256$4096:placeholder$placeholder:placeholder"

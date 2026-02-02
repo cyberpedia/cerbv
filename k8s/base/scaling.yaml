@@ -1,0 +1,370 @@
+# Cerberus Scaling Configuration
+# HPA, Cluster Autoscaler, and Read Replica Configuration
+
+---
+# Horizontal Pod Autoscaler - Backend API
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cerberus-backend-hpa
+  namespace: cerberus
+  labels:
+    app: cerberus-backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cerberus-backend
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Pods
+      pods:
+        metric:
+          name: http_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: "1000"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+      selectPolicy: Max
+
+---
+# Horizontal Pod Autoscaler - Realtime Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cerberus-realtime-hpa
+  namespace: cerberus
+  labels:
+    app: cerberus-realtime
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cerberus-realtime
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Pods
+      pods:
+        metric:
+          name: websocket_connections
+        target:
+          type: AverageValue
+          averageValue: "500"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+
+---
+# Horizontal Pod Autoscaler - Frontend
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cerberus-frontend-hpa
+  namespace: cerberus
+  labels:
+    app: cerberus-frontend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cerberus-frontend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+
+---
+# Vertical Pod Autoscaler - Backend
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: cerberus-backend-vpa
+  namespace: cerberus
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cerberus-backend
+  updatePolicy:
+    updateMode: Auto
+    minReplicas: 3
+  resourcePolicy:
+    containerPolicies:
+      - containerName: backend
+        minAllowed:
+          cpu: 500m
+          memory: 512Mi
+        maxAllowed:
+          cpu: 4000m
+          memory: 4Gi
+        controlledValues: RequestsOnly
+
+---
+# Vertical Pod Autoscaler - Realtime
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: cerberus-realtime-vpa
+  namespace: cerberus
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cerberus-realtime
+  updatePolicy:
+    updateMode: Auto
+  resourcePolicy:
+    containerPolicies:
+      - containerName: realtime
+        minAllowed:
+          cpu: 250m
+          memory: 256Mi
+        maxAllowed:
+          cpu: 2000m
+          memory: 2Gi
+        controlledValues: RequestsOnly
+
+---
+# PostgreSQL Read Replica Service (for leaderboard queries)
+apiVersion: v1
+kind: Service
+metadata:
+  name: cerberus-postgres-read
+  namespace: cerberus
+  labels:
+    app: postgres-replica
+    role: read
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgres
+  selector:
+    app: postgres-replica
+
+---
+# Pod Disruption Budget - Backend
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cerberus-backend-pdb
+  namespace: cerberus
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: cerberus-backend
+
+---
+# Pod Disruption Budget - Realtime
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cerberus-realtime-pdb
+  namespace: cerberus
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: cerberus-realtime
+
+---
+# Pod Disruption Budget - Frontend
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cerberus-frontend-pdb
+  namespace: cerberus
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: cerberus-frontend
+
+---
+# Service Monitor for custom metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cerberus-backend-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: cerberus-backend
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+  namespaceSelector:
+    matchNames:
+      - cerberus
+
+---
+# Service Monitor for custom metrics - Realtime
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cerberus-realtime-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: cerberus-realtime
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+  namespaceSelector:
+    matchNames:
+      - cerberus
+
+---
+# PrometheusRule - Scaling Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cerberus-scaling-alerts
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  groups:
+    - name: cerberus-scaling
+      rules:
+        - alert: BackendHighCPU
+          expr: >
+            rate(container_cpu_usage_seconds_total{namespace="cerberus",pod=~"cerberus-backend.*"}[5m]) * 100
+            > 80
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Backend CPU usage high"
+            description: "Backend pods CPU usage above 80%"
+
+        - alert: BackendHighMemory
+          expr: >
+            container_memory_working_set_bytes{namespace="cerberus",pod=~"cerberus-backend.*"}
+            / container_spec_memory_limit_bytes{namespace="cerberus",pod=~"cerberus-backend.*"}
+            > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Backend memory usage high"
+            description: "Backend pods memory usage above 85%"
+
+        - alert: RealtimeHighConnections
+          expr: >
+            cerberus_websocket_connections_active > 5000
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "WebSocket connections high"
+            description: "Active WebSocket connections above 5000"
+
+        - alert: DatabaseReplicationLag
+          expr: >
+            pg_replication_lag_seconds > 30
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Database replication lag"
+            description: "PostgreSQL replication lag above 30 seconds"
+
+        - alert: HPAAtMax
+          expr: >
+            kube_hpa_status_current_replicas >= kube_hpa_spec_max_replicas
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "HPA at maximum replicas"
+            description: "Horizontal Pod Autoscaler is at maximum replicas"
+
+---
+# PriorityClass for system workloads
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: cerberus-system-high
+  value: 1000000
+  globalDefault: false
+  preemptionPolicy: PreemptLowerPriority
+description: "High priority for Cerberus system components"
+
+---
+# PriorityClass for user workloads
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: cerberus-user-normal
+  value: 500000
+  globalDefault: true
+  preemptionPolicy: PreemptLowerPriority
+description: "Normal priority for Cerberus user workloads"

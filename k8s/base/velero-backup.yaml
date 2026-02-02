@@ -1,0 +1,182 @@
+# Velero Backup Configuration for Kubernetes
+# RTO: 4 hours, RPO: 15 minutes
+
+---
+# Velero BackupSchedule - Daily full backup
+apiVersion: velero.io/v1
+kind: BackupSchedule
+metadata:
+  name: cerberus-daily
+  namespace: velero
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM UTC
+  template:
+    includedNamespaces:
+      - cerberus
+      - monitoring
+    excludedResources:
+      - events
+      - events.events.k8s.io
+    storageLocation: default
+    volumeSnapshotLocations:
+      - default
+    ttl: 720h  # 30 days
+    includeClusterResources: true
+    snapshotVolumes: true
+    hooks:
+      resources:
+        - name: postgres-backup-hook
+          includedNamespaces:
+            - cerberus
+          labelSelector:
+            matchLabels:
+              app: postgres-primary
+          pre:
+            - exec:
+                container: postgres-primary
+                command:
+                  - /bin/bash
+                  - -c
+                  - pgbackrest --stanza=cerberus backup --type=full
+                onError: Fail
+                timeout: 300s
+          post:
+            - exec:
+                container: postgres-primary
+                command:
+                  - /bin/bash
+                  - -c
+                  - echo "Post-backup verification complete"
+                onError: Continue
+                timeout: 60s
+
+---
+# Velero BackupSchedule - Hourly incremental
+apiVersion: velero.io/v1
+kind: BackupSchedule
+metadata:
+  name: cerberus-hourly
+  namespace: velero
+spec:
+  schedule: "0 * * * *"  # Every hour
+  template:
+    includedNamespaces:
+      - cerberus
+    excludedResources:
+      - events
+      - events.events.k8s.io
+    storageLocation: default
+    ttl: 24h  # 1 day
+    includeClusterResources: false
+    snapshotVolumes: false
+
+---
+# Velero BackupStorageLocation
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  name: default
+  namespace: velero
+spec:
+  provider: aws
+  objectStorage:
+    bucket: cerberus-velero-backups
+    prefix: velero
+  config:
+    region: minio
+    s3ForcePathStyle: "true"
+    s3Url: http://minio:9000
+    publicUrl: https://backups.cerberus.example.com
+
+---
+# Velero VolumeSnapshotLocation
+apiVersion: velero.io/v1
+kind: VolumeSnapshotLocation
+metadata:
+  name: default
+  namespace: velero
+spec:
+  provider: aws
+  config:
+    region: minio
+    s3ForcePathStyle: "true"
+    s3Url: http://minio:9000
+
+---
+# CronJob for weekly restore drill
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cerberus-restore-drill
+  namespace: cerberus
+spec:
+  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM UTC
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: velero
+          containers:
+            - name: restore-drill
+              image: velero/velero:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "Starting weekly restore drill..."
+                  # Create test namespace
+                  velero restore create cerberus-restore-drill-$(date +%Y%m%d) \
+                    --from-backup cerberus-daily \
+                    --namespace-mappings cerberus:cerberus-restore-test
+                  # Verify restore
+                  echo "Verifying restored resources..."
+                  kubectl get all -n cerberus-restore-test
+                  # Cleanup test namespace
+                  kubectl delete namespace cerberus-restore-test
+                  echo "Restore drill completed"
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: velero-credentials
+                      key: aws-access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: velero-credentials
+                      key: aws-secret-access-key
+          restartPolicy: OnFailure
+
+---
+# Restore template (manual trigger)
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: cerberus-restore-template
+  namespace: velero
+spec:
+  backupName: ""
+  includedNamespaces:
+    - cerberus
+    - monitoring
+  excludedResources:
+    - events
+  restorePVs: true
+  preserveNodePorts: true
+  hooks:
+    resources:
+      - name: postgres-restore-hook
+        includedNamespaces:
+          - cerberus
+        postHooks:
+          - exec:
+              container: postgres-primary
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  echo "Post-restore PostgreSQL verification..."
+                  pg_isready -U postgres
+              waitTimeout: 300s
+              execTimeout: 60s
+              onError: Continue

@@ -1,0 +1,76 @@
+# Cerberus Kubernetes ConfigMap
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cerberus-config
+  namespace: cerberus
+data:
+  # Application configuration
+  APP_NAME: "Cerberus CTF Platform"
+  APP_VERSION: "1.0.0"
+  ENVIRONMENT: "production"
+  
+  # Domain configuration
+  DOMAIN: "cerberus.example.com"
+  API_DOMAIN: "api.cerberus.example.com"
+  FRONTEND_DOMAIN: "cerberus.example.com"
+  
+  # Feature flags
+  FEATURE_AD_MODE: "true"
+  FEATURE_KOTH: "true"
+  FEATURE_CHALLENGE_SANDBOX: "true"
+  
+  # Logging
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  
+  # Performance
+  WORKERS: "4"
+  MAX_CONNECTIONS: "200"
+  
+  # Database
+  DB_POOL_SIZE: "20"
+  DB_MAX_OVERFLOW: "10"
+  
+  # Redis
+  REDIS_CACHE_TTL: "3600"
+  
+  # Security
+  CORS_ORIGINS: "https://cerberus.example.com"
+  RATE_LIMIT_DEFAULT: "100/minute"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-config
+  namespace: monitoring
+data:
+  # Prometheus configuration
+  PROMETHEUS_RETENTION: "15d"
+  PROMETHEUS_SCRAPE_INTERVAL: "15s"
+  
+  # Grafana configuration
+  GRAFANA_ADMIN_USER: "admin"
+  
+  # Loki configuration
+  LOKI_RETENTION: "30d"
+  LOKI_COMPACTION_INTERVAL: "10m"
+  
+  # Alertmanager configuration
+  ALERT_REPEAT_INTERVAL: "4h"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: cerberus
+data:
+  # PostgreSQL configuration
+  POSTGRES_MAX_CONNECTIONS: "200"
+  POSTGRES_SHARED_BUFFERS: "512MB"
+  POSTGRES_EFFECTIVE_CACHE_SIZE: "1GB"
+  POSTGRES_WORK_MEM: "16MB"
+  POSTGRES_MAINTENANCE_WORK_MEM: "128MB"
+  POSTGRES_WAL_LEVEL: "replica"
+  POSTGRES_CHECKPOINT_COMPLETION_TARGET: "0.9"
